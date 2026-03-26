@@ -141,6 +141,7 @@
         <button class="pole-nav-btn" id="btn-prev" onclick="navigatePole(-1)">&#9664;</button>
         <button class="pole-counter" id="pole-counter" onclick="openPolePicker()">1 / 50</button>
         <button class="pole-nav-btn" id="btn-next" onclick="navigatePole(1)">&#9654;</button>
+        <button class="pole-nav-btn" id="btn-add-pole" onclick="addPole()" title="Add Pole" style="font-size:20px;font-weight:700">+</button>
       </div>
       <button class="topbar-btn" onclick="showScreen('summary')">Export</button>
     </div>
@@ -202,6 +203,7 @@
     </div>
   </div>
 
+  <script src="jszip.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="app.js"></script>
 </body>

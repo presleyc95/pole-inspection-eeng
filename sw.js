@@ -1,9 +1,10 @@
-const CACHE_NAME = 'pole-inspect-v1';
+const CACHE_NAME = 'pole-inspect-v2';
 const ASSETS = [
   './',
   './index.html',
   './app.css',
   './app.js',
+  './jszip.min.js',
   'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js'
 ];
 

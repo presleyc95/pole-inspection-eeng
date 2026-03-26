@@ -28,23 +28,21 @@ const REGIONS = {
   Southwest: ['El Dorado','Magnolia','Arkadelphia','Glenwood','Hot Springs','Malvern'],
 };
 
-const DATA_START_ROW = 9;   // 1-indexed, row 9 in Excel
+const DATA_START_ROW = 9;
+const MAX_ROW = 509;
 const SHEET_NAME = 'Reliability Form';
 
-// Column letters → 0-indexed column number
 function colIdx(letter) {
   let n = 0;
   for (let i = 0; i < letter.length; i++) n = n * 26 + letter.charCodeAt(i) - 64;
   return n - 1;
 }
 function colLetter(idx) {
-  let s = '';
-  idx++;
+  let s = ''; idx++;
   while (idx > 0) { idx--; s = String.fromCharCode(65 + (idx % 26)) + s; idx = Math.floor(idx / 26); }
   return s;
 }
 
-// Pole field definitions – each maps to a column in the spreadsheet
 const POLE_SECTIONS = [
   { id: 'location', title: 'Location & Access', fields: [
     { key: 'C', label: 'DLOC# / GPS',           type: 'text',    gps: true },
@@ -105,17 +103,18 @@ const POLE_SECTIONS = [
   ]},
 ];
 
-// All data columns we read/write (excludes formula columns like AL, AQ+)
 const DATA_COLS = [];
 POLE_SECTIONS.forEach(s => s.fields.forEach(f => DATA_COLS.push(f.key)));
-DATA_COLS.unshift('A'); // Item #
+DATA_COLS.unshift('A');
 
 // ── App State ────────────────────────────────────────────────
 
 let state = {
-  workbook: null,        // raw SheetJS workbook (kept for export)
+  rawFile: null,         // original file bytes (ArrayBuffer) for export
+  workbook: null,        // SheetJS workbook (for reading)
   header: {},
-  poles: [],             // array of { A: val, B: val, ... } per pole
+  poles: [],             // poles with DLOC numbers
+  emptyRows: [],         // rows with item # but no DLOC (available for new poles)
   currentPole: 0,
   fileName: '',
 };
@@ -139,8 +138,7 @@ dropZone.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--blue)'; });
 dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = ''; });
 dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.style.borderColor = '';
+  e.preventDefault(); dropZone.style.borderColor = '';
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
@@ -154,10 +152,12 @@ function handleFile(file) {
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
-      const data = new Uint8Array(e.target.result);
+      const buf = e.target.result;
+      state.rawFile = buf.slice(0);  // keep a copy of original bytes
+      const data = new Uint8Array(buf);
       state.workbook = XLSX.read(data, { type: 'array', cellFormula: true, cellStyles: false });
       parseWorkbook();
-      importStatus.textContent = `Loaded ${state.poles.length} poles`;
+      importStatus.textContent = `Loaded ${state.poles.length} poles (${state.emptyRows.length} empty rows available)`;
       populateHeaderForm();
       document.getElementById('pole-count-label').textContent = state.poles.length;
       setTimeout(() => showScreen('header'), 400);
@@ -187,28 +187,41 @@ function parseWorkbook() {
     }
   }
 
-  // Read pole rows
+  // Read pole rows – only count poles that have a DLOC number (column C)
   state.poles = [];
-  for (let r = DATA_START_ROW; r <= 509; r++) {
+  state.emptyRows = [];
+
+  for (let r = DATA_START_ROW; r <= MAX_ROW; r++) {
     const cellA = ws[`A${r}`];
     if (!cellA || cellA.v == null) continue;
 
-    const pole = {};
-    for (const col of DATA_COLS) {
-      const addr = col + r;
-      const cell = ws[addr];
-      if (cell && cell.v != null) {
-        pole[col] = cell.f ? cell.v : cell.v;  // Use value, not formula
+    const cellC = ws[`C${r}`];
+    const hasDLOC = cellC && cellC.v != null && String(cellC.v).trim() !== '';
+
+    if (hasDLOC) {
+      const pole = {};
+      for (const col of DATA_COLS) {
+        const addr = col + r;
+        const cell = ws[addr];
+        if (cell && cell.v != null) pole[col] = cell.v;
       }
+      pole._row = r;
+      state.poles.push(pole);
+    } else {
+      state.emptyRows.push({ itemNum: cellA.v, row: r });
     }
-    pole._row = r;  // Remember the Excel row for export
-    state.poles.push(pole);
   }
 }
 
 function excelDateToJS(serial) {
   const epoch = new Date(1899, 11, 30);
   return new Date(epoch.getTime() + serial * 86400000);
+}
+
+function jsDateToExcelSerial(dateStr) {
+  const d = new Date(dateStr);
+  const epoch = new Date(1899, 11, 30);
+  return Math.round((d.getTime() - epoch.getTime()) / 86400000);
 }
 
 function formatDateForInput(d) {
@@ -239,7 +252,6 @@ document.getElementById('sel-region').addEventListener('change', function() {
 
 function updateRegionOptions(jurisdiction) {
   const sel = document.getElementById('sel-region');
-  const current = sel.value;
   sel.innerHTML = '<option value="">-- Select --</option>';
   Object.keys(REGIONS).forEach(r => {
     const opt = document.createElement('option');
@@ -284,7 +296,6 @@ function renderPole() {
   const pole = state.poles[idx];
   if (!pole) return;
 
-  // Update nav
   document.getElementById('pole-counter').textContent = `${idx + 1} / ${state.poles.length}`;
   document.getElementById('btn-prev').disabled = idx === 0;
   document.getElementById('btn-next').disabled = idx === state.poles.length - 1;
@@ -292,14 +303,11 @@ function renderPole() {
   const isLast = idx === state.poles.length - 1;
   document.getElementById('btn-next-bottom').textContent = isLast ? 'Finish' : 'Next Pole';
 
-  // Update progress
   updateProgress();
 
-  // Build form
   const container = document.getElementById('pole-form-container');
   container.innerHTML = '';
 
-  // Pole # badge
   const badge = document.createElement('div');
   badge.className = 'form-card';
   badge.innerHTML = `<div class="form-section" style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
@@ -309,7 +317,6 @@ function renderPole() {
   </div>`;
   container.appendChild(badge);
 
-  // Sections
   POLE_SECTIONS.forEach(section => {
     const card = document.createElement('div');
     card.className = 'form-card';
@@ -337,7 +344,6 @@ function renderPole() {
       row.className = 'pole-row';
       row.innerHTML = `<div class="pole-row-label">${field.label}</div><div class="pole-row-input" id="field-${field.key}"></div>`;
       body.appendChild(row);
-      // Render input after appending to DOM
       setTimeout(() => renderFieldInput(field, pole), 0);
     });
 
@@ -432,14 +438,28 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ── Add Pole ─────────────────────────────────────────────────
+
+function addPole() {
+  if (state.emptyRows.length === 0) {
+    alert('No empty rows available. All 500 rows are in use.');
+    return;
+  }
+  const nextRow = state.emptyRows.shift();
+  const newPole = { A: nextRow.itemNum, _row: nextRow.row, _isNew: true };
+  state.poles.push(newPole);
+  state.currentPole = state.poles.length - 1;
+  document.getElementById('pole-count-label').textContent = state.poles.length;
+  autoSave();
+  renderPole();
+}
+
 // ── Pole Navigation ──────────────────────────────────────────
 
 function navigatePole(dir) {
   const next = state.currentPole + dir;
   if (next < 0 || next >= state.poles.length) {
-    if (dir > 0 && state.currentPole === state.poles.length - 1) {
-      showScreen('summary');
-    }
+    if (dir > 0 && state.currentPole === state.poles.length - 1) showScreen('summary');
     return;
   }
   state.currentPole = next;
@@ -447,8 +467,7 @@ function navigatePole(dir) {
 }
 
 function openPolePicker() {
-  const modal = document.getElementById('pole-picker-modal');
-  modal.hidden = false;
+  document.getElementById('pole-picker-modal').hidden = false;
   renderPolePicker();
   document.getElementById('pole-search').value = '';
   document.getElementById('pole-search').focus();
@@ -466,7 +485,6 @@ function renderPolePicker(filter) {
     const num = String(pole.A || (i+1));
     const dloc = String(pole.C || '');
     if (q && !num.includes(q) && !dloc.toLowerCase().includes(q)) return;
-
     const hasData = poleHasData(pole);
     const item = document.createElement('div');
     item.className = 'pole-picker-item' + (i === state.currentPole ? ' current' : '');
@@ -477,13 +495,11 @@ function renderPolePicker(filter) {
   });
 }
 
-function filterPoles() {
-  renderPolePicker(document.getElementById('pole-search').value);
-}
+function filterPoles() { renderPolePicker(document.getElementById('pole-search').value); }
 
 function poleHasData(pole) {
   return POLE_SECTIONS.some(s => s.fields.some(f => {
-    if (f.key === 'A') return false;
+    if (f.key === 'C') return false; // DLOC doesn't count as "inspected"
     const v = pole[f.key];
     return v != null && v !== '' && v !== 0;
   }));
@@ -522,61 +538,179 @@ function fillGPS(col) {
   );
 }
 
-// ── Export ────────────────────────────────────────────────────
+// ── Export (JSZip – preserves formatting) ─────────────────────
 
-function exportFile() {
-  if (!state.workbook) { alert('No workbook loaded'); return; }
-
-  const ws = state.workbook.Sheets[SHEET_NAME];
-
-  // Write header cells
-  for (const [key, def] of Object.entries(HEADER_CELLS)) {
-    const val = state.header[key];
-    if (val != null && val !== '') {
-      if (key === 'completionDate') {
-        ws[def.c] = { t: 'd', v: new Date(val) };
-      } else if (['reconductorCost','relocationCost','sectCost'].includes(key)) {
-        ws[def.c] = { t: 'n', v: Number(val) || 0 };
-      } else {
-        ws[def.c] = { t: 's', v: String(val) };
-      }
-    }
+async function exportFile() {
+  if (!state.rawFile) {
+    alert('Original file not available. Please re-import the .xlsx file before exporting.');
+    return;
   }
 
-  // Write pole data
-  state.poles.forEach(pole => {
-    const r = pole._row;
-    DATA_COLS.forEach(col => {
-      if (col === 'A') return; // Don't overwrite item numbers
-      const addr = col + r;
-      const val = pole[col];
-      // Skip if the cell has a formula (don't overwrite formulas)
-      if (ws[addr] && ws[addr].f) return;
+  saveHeader();
 
-      if (val != null && val !== '') {
-        if (typeof val === 'number') {
-          ws[addr] = { t: 'n', v: val };
-        } else {
-          const num = Number(val);
-          if (!isNaN(num) && val !== '' && /^-?\d+\.?\d*$/.test(String(val).trim())) {
-            ws[addr] = { t: 'n', v: num };
-          } else {
-            ws[addr] = { t: 's', v: String(val) };
-          }
-        }
+  try {
+    const zip = await JSZip.loadAsync(state.rawFile);
+    const sheetPath = await findSheetPath(zip, SHEET_NAME);
+    const xml = await zip.file(sheetPath).async('string');
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xml, 'application/xml');
+    const ns = doc.documentElement.namespaceURI;
+
+    // Write header cells
+    for (const [key, def] of Object.entries(HEADER_CELLS)) {
+      const val = state.header[key];
+      if (val == null || val === '') continue;
+      const match = def.c.match(/^([A-Z]+)(\d+)$/);
+      const col = match[1], row = parseInt(match[2]);
+      if (key === 'completionDate') {
+        setCellValue(doc, ns, row, col, jsDateToExcelSerial(val), true);
+      } else if (['reconductorCost','relocationCost','sectCost'].includes(key)) {
+        setCellValue(doc, ns, row, col, Number(val) || 0, true);
+      } else {
+        setCellValue(doc, ns, row, col, String(val), false);
       }
+    }
+
+    // Write pole data
+    state.poles.forEach(pole => {
+      const r = pole._row;
+      DATA_COLS.forEach(col => {
+        if (col === 'A') return;
+        const val = pole[col];
+        if (val == null || val === '') return;
+        const isNum = typeof val === 'number' || (typeof val === 'string' && /^-?\d+\.?\d*$/.test(val.trim()) && val.trim() !== '');
+        setCellValue(doc, ns, r, col, val, isNum);
+      });
     });
-  });
 
-  // Generate file
-  const wbout = XLSX.write(state.workbook, { bookType: 'xlsx', type: 'array' });
-  const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    // Serialize back to XML
+    const serializer = new XMLSerializer();
+    let newXml = serializer.serializeToString(doc);
+    if (!newXml.startsWith('<?xml')) {
+      newXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + newXml;
+    }
+    zip.file(sheetPath, newXml);
+
+    // Generate file
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    const baseName = state.fileName.replace(/\.xlsx?$/i, '');
+    downloadBlob(blob, baseName + '_completed.xlsx');
+
+  } catch (err) {
+    alert('Export error: ' + err.message);
+    console.error(err);
+  }
+}
+
+async function findSheetPath(zip, sheetName) {
+  const wbXml = await zip.file('xl/workbook.xml').async('string');
+  const wbDoc = new DOMParser().parseFromString(wbXml, 'application/xml');
+  const wbNs = wbDoc.documentElement.namespaceURI;
+  const rNs = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+
+  let rId = null;
+  const sheets = wbDoc.getElementsByTagNameNS(wbNs, 'sheet');
+  for (let i = 0; i < sheets.length; i++) {
+    if (sheets[i].getAttribute('name') === sheetName) {
+      rId = sheets[i].getAttributeNS(rNs, 'id') || sheets[i].getAttribute('r:id');
+      break;
+    }
+  }
+  if (!rId) throw new Error('Sheet not found: ' + sheetName);
+
+  const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  const relsDoc = new DOMParser().parseFromString(relsXml, 'application/xml');
+  const rels = relsDoc.getElementsByTagName('Relationship');
+  for (let i = 0; i < rels.length; i++) {
+    if (rels[i].getAttribute('Id') === rId) {
+      const target = rels[i].getAttribute('Target');
+      return target.startsWith('/') ? target.substring(1) : 'xl/' + target;
+    }
+  }
+  throw new Error('Sheet file not found for rId: ' + rId);
+}
+
+function setCellValue(doc, ns, rowNum, colRef, value, isNumber) {
+  const sheetData = doc.getElementsByTagNameNS(ns, 'sheetData')[0];
+  const cellRef = colRef + rowNum;
+
+  // Find or create the row
+  let rowEl = null;
+  const rows = sheetData.getElementsByTagNameNS(ns, 'row');
+  for (let i = 0; i < rows.length; i++) {
+    if (parseInt(rows[i].getAttribute('r')) === rowNum) { rowEl = rows[i]; break; }
+  }
+  if (!rowEl) {
+    rowEl = doc.createElementNS(ns, 'row');
+    rowEl.setAttribute('r', String(rowNum));
+    let inserted = false;
+    for (let i = 0; i < rows.length; i++) {
+      if (parseInt(rows[i].getAttribute('r')) > rowNum) {
+        sheetData.insertBefore(rowEl, rows[i]);
+        inserted = true; break;
+      }
+    }
+    if (!inserted) sheetData.appendChild(rowEl);
+  }
+
+  // Find or create the cell
+  let cellEl = null;
+  const cells = rowEl.getElementsByTagNameNS(ns, 'c');
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i].getAttribute('r') === cellRef) { cellEl = cells[i]; break; }
+  }
+  if (!cellEl) {
+    cellEl = doc.createElementNS(ns, 'c');
+    cellEl.setAttribute('r', cellRef);
+    let inserted = false;
+    for (let i = 0; i < cells.length; i++) {
+      const existRef = cells[i].getAttribute('r');
+      const existCol = existRef.replace(/\d+/, '');
+      if (colIdx(existCol) > colIdx(colRef)) {
+        rowEl.insertBefore(cellEl, cells[i]);
+        inserted = true; break;
+      }
+    }
+    if (!inserted) rowEl.appendChild(cellEl);
+  }
+
+  // Skip formula cells
+  const formula = cellEl.getElementsByTagNameNS(ns, 'f')[0];
+  if (formula) return;
+
+  // Preserve the style attribute (s="...") – it stays on the element
+  // Clear existing value/inline-string children
+  const toRemove = [];
+  for (let i = 0; i < cellEl.childNodes.length; i++) {
+    const child = cellEl.childNodes[i];
+    if (child.nodeType === 1) {
+      const tag = child.localName;
+      if (tag === 'v' || tag === 'is') toRemove.push(child);
+    }
+  }
+  toRemove.forEach(c => cellEl.removeChild(c));
+
+  if (isNumber) {
+    cellEl.removeAttribute('t');
+    const vEl = doc.createElementNS(ns, 'v');
+    vEl.textContent = String(value);
+    cellEl.appendChild(vEl);
+  } else {
+    cellEl.setAttribute('t', 'inlineStr');
+    const isEl = doc.createElementNS(ns, 'is');
+    const tEl = doc.createElementNS(ns, 't');
+    tEl.textContent = String(value);
+    isEl.appendChild(tEl);
+    cellEl.appendChild(isEl);
+  }
+}
+
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
-
   const a = document.createElement('a');
   a.href = url;
-  const baseName = state.fileName.replace(/\.xlsx?$/i, '');
-  a.download = baseName + '_completed.xlsx';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -593,7 +727,6 @@ function renderSummary() {
   const totalFields = POLE_SECTIONS.reduce((a, s) => a + s.fields.length, 0);
   const filledFields = state.poles.reduce((a, p) => a + poleFilledCount(p), 0);
 
-  // Count specific issues
   let badPoles = 0, workItems = 0, urgentCount = 0;
   state.poles.forEach(p => {
     if (Number(p.K) > 0) badPoles += Number(p.K);
@@ -612,7 +745,6 @@ function renderSummary() {
     <div class="stat-card"><div class="stat-value">${Math.round(filledFields / (total * totalFields) * 100) || 0}%</div><div class="stat-label">Fields Filled</div></div>
   `;
 
-  // Pole status grid
   const grid = document.getElementById('pole-status-grid');
   grid.innerHTML = '';
   state.poles.forEach((pole, i) => {
@@ -638,12 +770,13 @@ function autoSave() {
     const save = {
       header: state.header,
       poles: state.poles,
+      emptyRows: state.emptyRows,
       currentPole: state.currentPole,
       fileName: state.fileName,
       savedAt: new Date().toISOString(),
     };
     localStorage.setItem('poleInspection', JSON.stringify(save));
-  } catch(e) { /* storage full or unavailable */ }
+  } catch(e) {}
 }
 
 function checkResume() {
@@ -659,9 +792,10 @@ function checkResume() {
         btn.onclick = () => {
           state.header = data.header;
           state.poles = data.poles;
+          state.emptyRows = data.emptyRows || [];
           state.currentPole = data.currentPole || 0;
           state.fileName = data.fileName;
-          // No workbook available for export – user must re-import for export
+          state.rawFile = null; // must re-import for export
           populateHeaderForm();
           document.getElementById('pole-count-label').textContent = state.poles.length;
           showScreen('header');
