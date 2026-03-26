@@ -593,7 +593,7 @@ async function exportFile() {
     zip.file(sheetPath, newXml);
 
     // Generate file
-    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const baseName = state.fileName.replace(/\.xlsx?$/i, '');
     downloadBlob(blob, baseName + '_completed.xlsx');
 
@@ -707,14 +707,17 @@ function setCellValue(doc, ns, rowNum, colRef, value, isNumber) {
 }
 
 function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
+  // Re-wrap blob with explicit xlsx MIME type so Safari doesn't save as .zip
+  const xlsxBlob = new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(xlsxBlob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // Delay revoke so Safari has time to start the download
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 // ── Summary Screen ───────────────────────────────────────────
