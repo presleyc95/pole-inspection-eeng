@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Pole Inspection</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <!-- SCREEN: Import -->
+  <div id="screen-import" class="screen active">
+    <div class="import-container">
+      <div class="app-logo">
+        <div class="logo-icon">&#9889;</div>
+        <h1>Pole Inspection</h1>
+        <p class="subtitle">Entergy Reliability Inspection Form</p>
+      </div>
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-icon">&#128196;</div>
+        <p>Tap to import inspection form</p>
+        <p class="hint">.xlsx file</p>
+        <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+      </div>
+      <div id="import-status" class="import-status" hidden></div>
+      <button id="btn-resume" class="btn btn-secondary" hidden>Resume Previous Session</button>
+    </div>
+  </div>
+
+  <!-- SCREEN: Header -->
+  <div id="screen-header" class="screen">
+    <div class="topbar">
+      <button class="topbar-btn" onclick="showScreen('import')">&#8592; Back</button>
+      <h2>Inspection Details</h2>
+      <div></div>
+    </div>
+    <div class="screen-body">
+      <form id="header-form" class="form-card">
+        <div class="form-section">
+          <h3>Project Info</h3>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Project ID</label>
+              <input type="text" data-header="projectId">
+            </div>
+            <div class="form-field">
+              <label>Inspection Completion Date</label>
+              <input type="date" data-header="completionDate">
+            </div>
+            <div class="form-field">
+              <label>Inspector(s)</label>
+              <input type="text" data-header="inspectors">
+            </div>
+          </div>
+        </div>
+        <div class="form-section">
+          <h3>Location</h3>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Jurisdiction</label>
+              <select data-header="jurisdiction">
+                <option value="">-- Select --</option>
+                <option value="AR">AR</option>
+                <option value="LA">LA</option>
+                <option value="MS">MS</option>
+                <option value="TX">TX</option>
+                <option value="ENO">ENO</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>Region</label>
+              <select data-header="region" id="sel-region">
+                <option value="">-- Select --</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>Network</label>
+              <select data-header="network" id="sel-network">
+                <option value="">-- Select --</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>Substation</label>
+              <input type="text" data-header="substation">
+            </div>
+          </div>
+        </div>
+        <div class="form-section">
+          <h3>Feeder / Device</h3>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Feeder</label>
+              <input type="text" data-header="feeder">
+            </div>
+            <div class="form-field">
+              <label>Device ID</label>
+              <input type="text" data-header="deviceId">
+            </div>
+            <div class="form-field">
+              <label>Device Type</label>
+              <input type="text" data-header="deviceType">
+            </div>
+          </div>
+        </div>
+        <div class="form-section">
+          <h3>Estimated Costs</h3>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Reconductor Est. Cost</label>
+              <input type="number" data-header="reconductorCost" min="0">
+            </div>
+            <div class="form-field">
+              <label>Relocation Est. Cost</label>
+              <input type="number" data-header="relocationCost" min="0">
+            </div>
+            <div class="form-field">
+              <label>Sectionalization Est. Cost</label>
+              <input type="number" data-header="sectCost" min="0">
+            </div>
+          </div>
+        </div>
+      </form>
+      <div class="bottom-action">
+        <button class="btn btn-primary btn-large" onclick="startInspection()">
+          Start Inspection &mdash; <span id="pole-count-label">0</span> Poles
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN: Pole Inspection -->
+  <div id="screen-pole" class="screen">
+    <div class="topbar">
+      <button class="topbar-btn" onclick="showScreen('header')">&#8592;</button>
+      <div class="pole-nav-center">
+        <button class="pole-nav-btn" id="btn-prev" onclick="navigatePole(-1)">&#9664;</button>
+        <button class="pole-counter" id="pole-counter" onclick="openPolePicker()">1 / 50</button>
+        <button class="pole-nav-btn" id="btn-next" onclick="navigatePole(1)">&#9654;</button>
+      </div>
+      <button class="topbar-btn" onclick="showScreen('summary')">Export</button>
+    </div>
+
+    <div class="pole-progress">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <span class="progress-text" id="progress-text">0% complete</span>
+    </div>
+
+    <div class="screen-body" id="pole-form-container">
+      <!-- Generated by JS -->
+    </div>
+
+    <div class="pole-bottom-nav">
+      <button class="btn btn-secondary" onclick="navigatePole(-1)" id="btn-prev-bottom">Previous</button>
+      <button class="btn btn-primary" onclick="navigatePole(1)" id="btn-next-bottom">Next Pole</button>
+    </div>
+  </div>
+
+  <!-- SCREEN: Pole Picker Modal -->
+  <div id="pole-picker-modal" class="modal" hidden>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Jump to Pole</h3>
+        <button class="modal-close" onclick="closePolePicker()">&times;</button>
+      </div>
+      <div class="pole-picker-search">
+        <input type="text" id="pole-search" placeholder="Search by # or DLOC..." oninput="filterPoles()">
+      </div>
+      <div class="pole-picker-list" id="pole-picker-list"></div>
+    </div>
+  </div>
+
+  <!-- SCREEN: Summary / Export -->
+  <div id="screen-summary" class="screen">
+    <div class="topbar">
+      <button class="topbar-btn" onclick="showScreen('pole')">&#8592; Back</button>
+      <h2>Summary & Export</h2>
+      <div></div>
+    </div>
+    <div class="screen-body">
+      <div class="form-card">
+        <div class="form-section">
+          <h3>Inspection Summary</h3>
+          <div class="summary-stats" id="summary-stats"></div>
+        </div>
+      </div>
+      <div class="form-card">
+        <div class="form-section">
+          <h3>Pole Status</h3>
+          <div class="pole-status-grid" id="pole-status-grid"></div>
+        </div>
+      </div>
+      <div class="bottom-action">
+        <button class="btn btn-primary btn-large" onclick="exportFile()">
+          Export Completed Form (.xlsx)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
