@@ -160,6 +160,7 @@ function handleFile(file) {
       importStatus.textContent = `Loaded ${state.poles.length} poles (${state.emptyRows.length} empty rows available)`;
       populateHeaderForm();
       document.getElementById('pole-count-label').textContent = state.poles.length;
+      _doAutoSave(); // persist rawFile + data to IndexedDB immediately
       setTimeout(() => showScreen('header'), 400);
     } catch (err) {
       importStatus.className = 'import-status error';
@@ -594,8 +595,7 @@ async function exportFile() {
 
     // Generate file
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const baseName = state.fileName.replace(/\.xlsx?$/i, '');
-    downloadBlob(blob, baseName + '_completed.xlsx');
+    downloadBlob(blob, state.fileName);
 
   } catch (err) {
     alert('Export error: ' + err.message);
@@ -766,44 +766,104 @@ function renderSummary() {
   });
 }
 
-// ── Auto-save to localStorage ────────────────────────────────
+// ── IndexedDB persistence (stores rawFile + form data) ───────
+
+const DB_NAME = 'PoleInspectionDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'sessions';
+const SESSION_KEY = 'current';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbSave(data) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(data, SESSION_KEY);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbLoad() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(SESSION_KEY);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function dbClear() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(SESSION_KEY);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ── Auto-save (IndexedDB – includes raw file) ───────────────
+
+let _saveTimeout = null;
 
 function autoSave() {
+  // Debounce: save at most once per second
+  if (_saveTimeout) clearTimeout(_saveTimeout);
+  _saveTimeout = setTimeout(() => _doAutoSave(), 1000);
+}
+
+async function _doAutoSave() {
+  const statusEl = document.getElementById('save-status');
   try {
-    const save = {
+    if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.className = 'save-status saving'; }
+    await dbSave({
       header: state.header,
       poles: state.poles,
       emptyRows: state.emptyRows,
       currentPole: state.currentPole,
       fileName: state.fileName,
+      rawFile: state.rawFile,  // ArrayBuffer stored in IndexedDB (no size limit)
       savedAt: new Date().toISOString(),
-    };
-    localStorage.setItem('poleInspection', JSON.stringify(save));
-  } catch(e) {}
+    });
+    if (statusEl) {
+      statusEl.textContent = 'Auto-saved';
+      statusEl.className = 'save-status';
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = 'Save failed'; statusEl.className = 'save-status error'; }
+  }
 }
 
-function checkResume() {
+async function checkResume() {
   try {
-    const saved = localStorage.getItem('poleInspection');
-    if (saved) {
-      const data = JSON.parse(saved);
-      if (data.poles && data.poles.length > 0) {
-        const btn = document.getElementById('btn-resume');
-        btn.hidden = false;
-        const ago = timeSince(new Date(data.savedAt));
-        btn.textContent = `Resume: ${data.fileName} (${data.poles.length} poles, saved ${ago})`;
-        btn.onclick = () => {
-          state.header = data.header;
-          state.poles = data.poles;
-          state.emptyRows = data.emptyRows || [];
-          state.currentPole = data.currentPole || 0;
-          state.fileName = data.fileName;
-          state.rawFile = null; // must re-import for export
-          populateHeaderForm();
-          document.getElementById('pole-count-label').textContent = state.poles.length;
-          showScreen('header');
-        };
-      }
+    const data = await dbLoad();
+    if (data && data.poles && data.poles.length > 0) {
+      const btn = document.getElementById('btn-resume');
+      btn.hidden = false;
+      const ago = timeSince(new Date(data.savedAt));
+      btn.textContent = `Resume: ${data.fileName} (${data.poles.length} poles, saved ${ago})`;
+      btn.onclick = () => {
+        state.header = data.header;
+        state.poles = data.poles;
+        state.emptyRows = data.emptyRows || [];
+        state.currentPole = data.currentPole || 0;
+        state.fileName = data.fileName;
+        state.rawFile = data.rawFile || null;
+        populateHeaderForm();
+        document.getElementById('pole-count-label').textContent = state.poles.length;
+        showScreen('header');
+      };
     }
   } catch(e) {}
 }
@@ -816,6 +876,13 @@ function timeSince(date) {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return hrs + 'h ago';
   return Math.floor(hrs / 24) + 'd ago';
+}
+
+// ── Manual Save (download .xlsx with same filename) ──────────
+
+async function saveFile() {
+  saveHeader();
+  await exportFile();  // reuses the export logic, now with original filename
 }
 
 // ── Service Worker ───────────────────────────────────────────

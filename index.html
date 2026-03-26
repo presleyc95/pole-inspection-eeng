@@ -143,12 +143,18 @@
         <button class="pole-nav-btn" id="btn-next" onclick="navigatePole(1)">&#9654;</button>
         <button class="pole-nav-btn" id="btn-add-pole" onclick="addPole()" title="Add Pole" style="font-size:20px;font-weight:700">+</button>
       </div>
-      <button class="topbar-btn" onclick="showScreen('summary')">Export</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="topbar-btn" onclick="saveFile()" id="btn-save" title="Save">&#128190;</button>
+        <button class="topbar-btn" onclick="showScreen('summary')">&#9776;</button>
+      </div>
     </div>
 
     <div class="pole-progress">
       <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-      <span class="progress-text" id="progress-text">0% complete</span>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="progress-text" id="progress-text">0% complete</span>
+        <span class="save-status" id="save-status"></span>
+      </div>
     </div>
 
     <div class="screen-body" id="pole-form-container">
@@ -179,8 +185,8 @@
   <div id="screen-summary" class="screen">
     <div class="topbar">
       <button class="topbar-btn" onclick="showScreen('pole')">&#8592; Back</button>
-      <h2>Summary & Export</h2>
-      <div></div>
+      <h2>Summary</h2>
+      <button class="topbar-btn" onclick="saveFile()">&#128190; Save</button>
     </div>
     <div class="screen-body">
       <div class="form-card">
@@ -196,8 +202,8 @@
         </div>
       </div>
       <div class="bottom-action">
-        <button class="btn btn-primary btn-large" onclick="exportFile()">
-          Export Completed Form (.xlsx)
+        <button class="btn btn-primary btn-large" onclick="saveFile()">
+          &#128190; Save File (.xlsx)
         </button>
       </div>
     </div>
